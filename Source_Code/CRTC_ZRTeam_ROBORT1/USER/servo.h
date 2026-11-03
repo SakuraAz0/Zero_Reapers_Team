@@ -35,14 +35,22 @@
 // 换算关系：电气角 = 机械角 - 偏移；脉宽 = 500 + 电气角 × 11.11（自动兜底限幅 500~2500us）
 // 改动后 MIN_US/MAX_US/START_US/SPAN_DEG 全部自动跟着算，不需要动别处。
 // ---------------------------------------------------------------------------
+// ===== 本车机械臂"装了哪几个舵机"（决定一键序列会动哪些轴 / 哪些点动有效）=====
+// 车2 = 3 个舵机：MG995(CH1) + 上面 SG90(CH4) + 机械爪(CH3)，**没有下面那节 SG90(CH2)**
+#ifndef SERVO_HAS_SG90_LOW
+#define SERVO_HAS_SG90_LOW      0      /* 1=装了 CH2 SG90(下)，0=没装（车2） */
+#endif
+#ifndef SERVO_HAS_SG90_UP
+#define SERVO_HAS_SG90_UP       1      /* 1=装了 CH4 SG90(上) */
+#endif
+// ---------------------------------------------------------------------------
 // CH1 = MG995（最下面那段臂，右摇杆 Y 控制）
 #define SERVO0_OFFSET_DEG       0      /* 机械零点偏移（度） */
 #define SERVO0_MIN_ANGLE_DEG    0      /* 行程下限 */
-#define SERVO0_MAX_ANGLE_DEG    130    /* 行程上限（实测机械可到 160°，这里取 130° 留足余量） */
+#define SERVO0_MAX_ANGLE_DEG    140    /* 行程上限（实测机械极限 160°，取 140° 留 20° 余量） */
 #define SERVO0_START_ANGLE_DEG  0      /* 上电初始角 */
 
-// CH2 = SG90（下面那段臂，L1/L2 控制）
-// 偏移 -10 -> 机械角 = 电气角 - 10，所以可达机械角 = -10°~170°；上限填 175 会越界 5°（编译期警告已提示）
+// CH2 = SG90（下面那段臂）—— 车2 没有这个舵机（SERVO_HAS_SG90_LOW=0），配置仅保留备用
 #define SERVO1_OFFSET_DEG       -10
 #define SERVO1_MIN_ANGLE_DEG    5
 #define SERVO1_MAX_ANGLE_DEG    170    /* 170-(-10)=180 正好到电气上限 */
@@ -54,7 +62,7 @@
 // 原来填 5~170 时，5-88=-83 越界被限幅，导致实际只能转约 82°。
 #define SERVO3_OFFSET_DEG       0
 #define SERVO3_MIN_ANGLE_DEG    5
-#define SERVO3_MAX_ANGLE_DEG    175
+#define SERVO3_MAX_ANGLE_DEG    170
 #define SERVO3_START_ANGLE_DEG  170
 // ---------------------------------------------------------------------------
 // ===== 编译期自检：行程是否落在舵机物理范围（电气 0~180°）内 =====
@@ -98,23 +106,57 @@
 #endif
 // ---------------------------------------------------------------------------
 
-// ===== 一键放下（模式 1 = 一键张合模式下，按 L1 触发）=====
-// 动作顺序固定为 **从下往上依次动**：MG995 -> SG90(下) -> SG90(上) -> 等一会儿 -> 机械爪松开；
-// 前一个舵机到位后，下一个才开始动（不是同时动）。
-// 三个角度都是 **偏移后的机械角**，与上面 SERVOx_*_ANGLE_DEG 同一个坐标系。
-// 若超出行程会被自动限幅；机械爪固定走到"完全张开"。
+// ===== 一键放下（**模式 0** 下按 L1 触发）=====
+// 动作顺序固定为 **从下往上依次动**：MG995 -> SG90(上) -> 等一会儿 -> 机械爪张开；
+// （车2 没有 SG90(下)，这一步会自动跳过；前一个舵机到位后下一个才开始动）
+// 角度都是 **偏移后的机械角**，与上面 SERVOx_*_ANGLE_DEG 同一个坐标系；超出行程会自动限幅。
 #ifndef SERVO_DROP_MG995_DEG
-#define SERVO_DROP_MG995_DEG      50      /* CH1 MG995 目标机械角 */
+#define SERVO_DROP_MG995_DEG      35      /* CH1 MG995 目标机械角 */
 #endif
 #ifndef SERVO_DROP_SG90_LOW_DEG
-#define SERVO_DROP_SG90_LOW_DEG   5       /* CH2 SG90(下) 目标机械角 */
+#define SERVO_DROP_SG90_LOW_DEG   5       /* CH2 SG90(下) 目标机械角（本车没有该舵机，忽略） */
 #endif
 #ifndef SERVO_DROP_SG90_UP_DEG
-#define SERVO_DROP_SG90_UP_DEG    88      /* CH4 SG90(上) 目标机械角 = 该路最低点(电气0°/500us) */
+#define SERVO_DROP_SG90_UP_DEG    10      /* CH4 SG90(上) 目标机械角 = 该路最低点(电气0°/500us) */
 #endif
 #ifndef SERVO_DROP_GRIP_DELAY_MS
-#define SERVO_DROP_GRIP_DELAY_MS  250     /* 上面三个舵机都到位后，再等这么久机械爪才松开 */
+#define SERVO_DROP_GRIP_DELAY_MS  100     /* 上面三个舵机都到位后，再等这么久机械爪才张开 */
 #endif
+
+// ===== 一键摆臂（**模式 0** 下按 L2 触发）=====
+// 顺序：**SG90(上) -> MG995 -> 等延时** -> 机械爪张开（先上后下，避免卡住；本车没有 SG90(下)）
+// 角度都是"偏移后的机械角"，改这里就能调姿态，不用动代码。
+#ifndef SERVO_POSE_MG995_DEG
+#define SERVO_POSE_MG995_DEG      138      /* CH1 MG995 目标机械角 */
+#endif
+#ifndef SERVO_POSE_SG90_LOW_DEG
+#define SERVO_POSE_SG90_LOW_DEG   110     /* CH2 SG90(下) 目标机械角（本车没有该舵机，忽略） */
+#endif
+#ifndef SERVO_POSE_SG90_UP_DEG
+#define SERVO_POSE_SG90_UP_DEG    80    /* CH4 SG90(上) 目标机械角 */
+#endif
+#ifndef SERVO_POSE_GRIP_DELAY_MS
+#define SERVO_POSE_GRIP_DELAY_MS  60     /* 舵机到位后等 50ms 再张开机械爪 */
+#endif
+
+// ===== 联动限位（防机械干涉）：MG995(CH1) 与 上面的 SG90(CH4) 不能同时在高位 =====
+// 规则：MG995 机械角 >= 138° 时，SG90(上) 最多到 87°；
+//       反过来 SG90(上) > 87° 时，MG995 最多到 137°（保证"MG995 到 138° 且 SG90 超 87°"不会出现）。
+// 只作用于"设置目标"（摇杆/按键/一键序列），不影响上电姿态与 Servo_SetPulse 调试直写。
+#ifndef SERVO_LINK_ENABLE
+#define SERVO_LINK_ENABLE          1
+#endif
+#ifndef SERVO_LINK_MG995_UP_DEG
+#define SERVO_LINK_MG995_UP_DEG    138    /* MG995 的"高位"门限（机械角） */
+#endif
+#ifndef SERVO_LINK_SG90_UP_MAX_DEG
+#define SERVO_LINK_SG90_UP_MAX_DEG 87     /* MG995 高位时 SG90(上) 的最大机械角 */
+#endif
+
+// ===== 一键序列编号（调试用 g_servo_seq_id 的取值）=====
+#define SERVO_SEQ_NONE   0    /* 空闲 */
+#define SERVO_SEQ_DROP   1    /* 模式0 的 L1：一键放下 */
+#define SERVO_SEQ_POSE   2    /* 模式0 的 L2：一键摆臂 */
 
 // 角度 -> 脉宽：先按 11.11us/° 换算，再兜底限幅到舵机物理范围 500~2500us
 #define SERVO_US_CLAMP(us) \
@@ -140,37 +182,78 @@
 // 13.5° = 150us。当前取 -135，得到：全闭 350us、全开 1350us。
 // 现场微调：张开端还顶死就减（-140 / -145）；闭合端顶死发烫就加回来（-130 / -120）。
 #define SERVO_GRIP_ANGLE_SHIFT_DEG10   (-130)
-#define SERVO_GRIP_SHIFT_US            ((int32_t)SERVO_GRIP_ANGLE_SHIFT_DEG10 * 1000 / (90 * 10))  // -135 -> -150us
-#define SERVO2_MIN_US                  ((uint16_t)(500  + SERVO_GRIP_SHIFT_US))   // 现在 350us（全闭）
-#define SERVO2_MAX_US                  ((uint16_t)(1500 + SERVO_GRIP_SHIFT_US))   // 现在 1350us（全开）
+#define SERVO_GRIP_SHIFT_US            ((int32_t)SERVO_GRIP_ANGLE_SHIFT_DEG10 * 1000 / (90 * 10))  // -130 -> -144us
+// 两端各收进这么多度（安全限位，防顶死 / 留余量）：5° = 55us，机械爪实际行程变成 80°（890us）
+#ifndef SERVO_GRIP_TRIM_DEG
+#define SERVO_GRIP_TRIM_DEG            5
+#endif
+#define SERVO_GRIP_TRIM_US             ((int32_t)SERVO_GRIP_TRIM_DEG * 1000 / 90)
+#define SERVO2_MIN_US                  ((uint16_t)(500  + SERVO_GRIP_SHIFT_US + SERVO_GRIP_TRIM_US))   // 356+33 = 389us（全闭）
+#define SERVO2_MAX_US                  ((uint16_t)(1500 + SERVO_GRIP_SHIFT_US - SERVO_GRIP_TRIM_US))   // 1356-33 = 1323us（全开）
 
 // ===== 每路舵机的"角度跨度"（用于 Servo_SetAngle：0 = 下限，SPAN = 上限）=====
-// 机械爪的 0°/90° 指**机构**全闭/全开（已含上面的零点偏移）
+// 机械爪的 0°/SPAN 指**机构**全闭/全开（已含上面的零点偏移与两端收进量）
 #define SERVO0_SPAN_DEG   ((uint16_t)(SERVO0_MAX_ANGLE_DEG - SERVO0_MIN_ANGLE_DEG))
 #define SERVO1_SPAN_DEG   ((uint16_t)(SERVO1_MAX_ANGLE_DEG - SERVO1_MIN_ANGLE_DEG))
-#define SERVO2_MAX_DEG    90       // 机械爪：0°=全闭、90°=全开
+#define SERVO2_MAX_DEG    (90 - 2 * SERVO_GRIP_TRIM_DEG)   // 机械爪：0°=全闭、SPAN=全开（当前 84°）
 #define SERVO3_SPAN_DEG   ((uint16_t)(SERVO3_MAX_ANGLE_DEG - SERVO3_MIN_ANGLE_DEG))
 
 // 机械爪上电停在**完全张开**（90°，一键式模式的初始位置，见下面 SERVO2_POWERON_US）
 
 // ===== 舵机移动速度 =====
-// Servo_Task 每 10ms 调用一次；三个机械臂舵机都是 11.11us/°（2000us=180°、机械爪 1000us=90°）。
-// 速度都以"每 tick 走多少 0.1us"表示，并用累加器实现（避免整数截断导致速度偏小）。
-//
-// **MG995**（CH1，最下面的臂）：100°/s，由右摇杆前后控制
-//   1 tick(10ms) 应走 1.0° = 11.11us -> SERVO_MG995_STEP_US10 = 111
-#define SERVO_MG995_DEG_PER_SEC   100
-#define SERVO_MG995_STEP_US10     111
+// ⚠️ Servo_Task 的调用节拍 = 主循环的 PS2 读取周期（现在 **10ms**，见 main.c 的 PS2_READ_PERIOD_MS）。
+// 下面的速度只填 **°/s**，每 tick 的步长会自动按 SERVO_TICK_MS 换算，不需要手算。
+// 三个机械臂舵机都是 11.11us/°（2000us=180°、机械爪 1000us=90°）。
+#ifndef SERVO_TICK_MS
+#define SERVO_TICK_MS   10       /* Servo_Task 调用周期（ms），必须和 main.c 的读取周期一致 */
+#endif
+/* °/s -> 每 tick 步长（单位 0.1us）：us/tick = deg*TICK/90 -> 0.1us/tick = deg*TICK/9 */
+#define SERVO_STEP_FROM_DEG(deg_per_sec) \
+    ((uint16_t)(((uint32_t)(deg_per_sec) * SERVO_TICK_MS + 4u) / 9u))
 
-// **两个 SG90**（CH2 下面 / CH4 上面）：90°/s，L1/L2、R1/R2 按住才动
-//   1 tick(10ms) 应走 0.9° = 10.0us -> SERVO_SG90_STEP_US10 = 100
-#define SERVO_SG90_DEG_PER_SEC    90
-#define SERVO_SG90_STEP_US10      100
+// **MG995**（CH1，最下面的臂）：**114°/s**（上一版 95°/s × 1.2），右摇杆前后控制
+#define SERVO_MG995_DEG_PER_SEC   114
+#define SERVO_MG995_STEP_US10     SERVO_STEP_FROM_DEG(SERVO_MG995_DEG_PER_SEC)
 
-// **机械爪**（MG90S，CH3）：120°/s（点动模式和一键张合都按这个速度走）
-//   1 tick(10ms) 应走 1.2° = 13.33us -> SERVO_GRIP_STEP_US10 = 133
-#define SERVO_GRIP_DEG_PER_SEC    120
-#define SERVO_GRIP_STEP_US10      133
+// **SG90-下**（CH2，下面那段臂）：**126°/s**（上一版 105°/s × 1.2），L1/L2 按住才动
+#define SERVO_SG90_LOW_DEG_PER_SEC    126
+#define SERVO_SG90_LOW_STEP_US10      SERVO_STEP_FROM_DEG(SERVO_SG90_LOW_DEG_PER_SEC)
+
+// **SG90-上**（CH4，上面那段臂）：**140°/s**（上一版 117°/s × 1.2），R1/R2 按住才动
+#define SERVO_SG90_UP_DEG_PER_SEC     140
+#define SERVO_SG90_UP_STEP_US10       SERVO_STEP_FROM_DEG(SERVO_SG90_UP_DEG_PER_SEC)
+
+// **机械爪**（MG90S，CH3）：**190°/s**（现场设定；点动和一键张合都按这个速度）
+#define SERVO_GRIP_DEG_PER_SEC    190
+#define SERVO_GRIP_STEP_US10      SERVO_STEP_FROM_DEG(SERVO_GRIP_DEG_PER_SEC)
+
+// ===== 机械爪：靠近"闭合端"自动减速（越靠近越慢，防夹手/撞击）=====
+// 离闭合端(全闭脉宽) SERVO_GRIP_SLOW_RANGE_DEG 度以内开始线性降速，
+// 到最后只剩 SERVO_GRIP_SLOW_MIN_PCT% 的速度（张开方向从闭合端出发时同样由慢到快）。
+#ifndef SERVO_GRIP_SLOW_ENABLE
+#define SERVO_GRIP_SLOW_ENABLE      1
+#endif
+#ifndef SERVO_GRIP_SLOW_RANGE_DEG
+#define SERVO_GRIP_SLOW_RANGE_DEG   25   /* 进入"慢速区"的范围（度）：25° ≈ 278us */
+#endif
+#ifndef SERVO_GRIP_SLOW_MIN_PCT
+#define SERVO_GRIP_SLOW_MIN_PCT     20   /* 贴着闭合端时的速度百分比（20 = 只剩 1/5 速度） */
+#endif
+
+// ===== 加减速曲线（起步/收尾慢，中间快；不改目标、不阻塞）=====
+// slew_toward_target() 每个 tick 更新一次"当前速度"：
+//   起步：从 0 开始，每 tick 最多 +（巡航速度 / SERVO_RAMP_ACCEL_DIV），约 DIV 个 tick 到巡航；
+//   收尾：剩余距离不足 SERVO_RAMP_TICKS 个 tick 的行程时按剩余距离线性降速。
+// 曲线只影响速度变化，目标位置照旧精确到达（最后一 tick 会补齐余量）。
+#ifndef SERVO_RAMP_ENABLE
+#define SERVO_RAMP_ENABLE        1
+#endif
+#ifndef SERVO_RAMP_TICKS
+#define SERVO_RAMP_TICKS         10    /* 收尾减速段长度（tick 数；5ms/tick -> 50ms） */
+#endif
+#ifndef SERVO_RAMP_ACCEL_DIV
+#define SERVO_RAMP_ACCEL_DIV     8     /* 起步加速：巡航速度/本值 = 每 tick 增速（约 8 tick 到巡航） */
+#endif
 
 // ===== MG995 右摇杆控制参数 =====
 // 摇杆死区（原始码值，PS2 惯例：推前 = 小值）+ 方向标定（实测方向反了就改成 -1）
@@ -189,21 +272,23 @@
 #define SERVO_GRIP_CLOSE_DEG       (SERVO_GRIP_OPEN_DEG - SERVO_GRIP_ONESHOT_DEG)   // 当前 = 30°
 
 // 一键张合的两个端点（脉宽）
-#define SERVO_GRIP_OPEN_US         SERVO2_MAX_US                        // 90° -> 1500us
-#define SERVO_GRIP_CLOSE_US        ((uint16_t)(SERVO2_MIN_US + \
-                                     (uint32_t)(SERVO2_MAX_US - SERVO2_MIN_US) * SERVO_GRIP_CLOSE_DEG / SERVO2_MAX_DEG))  // 30° -> 833us
+// 张开 = 行程上限；合上 = 从张开端往回收 SERVO_GRIP_ONESHOT_DEG 度（1° = 11.11us，
+// 与"两端各收进"无关，所以直接减脉宽，不用按跨度比例算）
+#define SERVO_GRIP_OPEN_US         SERVO2_MAX_US                        // 完全张开（行程上限）
+#define SERVO_GRIP_CLOSE_US        ((uint16_t)(SERVO2_MAX_US - \
+                                     (uint32_t)SERVO_GRIP_ONESHOT_DEG * 1000 / 90))
 
 #define SERVO2_POWERON_US          SERVO_GRIP_OPEN_US                   // 上电：完全张开
 
 // ===== 机械臂总控模式（SELECT 键切换）=====
-// 模式 0 = **全点动（上电默认）**：
+// 模式 0 = **全点动 + 两个一键动作（上电默认）**：
 //   - 机械爪：按住 □ 向张开方向、按住 ○ 向闭合方向，松开停在当前位置（0~90° 全程）
-//   - SG90(下)：L1/L2 点动；SG90(上)：R1/R2 点动；MG995：右摇杆前后
-//   - 该模式下**没有**一键放下
-// 模式 1 = **一键张合 + 一键放下**：
+//   - **L1 = 一键放下**（角度用 SERVO_DROP_* 宏）
+//   - **L2 = 一键摆臂**（角度用 SERVO_POSE_* 宏）
+//   - SG90(上)：R1/R2 点动；MG995：右摇杆前后
+// 模式 1 = **只有机械爪一键张合**（机械臂不再有一键动作）：
 //   - 机械爪：按一次自动走到位（完全张开 ↔ 合上），不再点动
-//   - **按一下 L1 = 一键放下**（MG995 40° -> SG90下 100° -> SG90上 0° -> 机械爪松开）
-//   - L2 仍可点动 SG90(下)
+//   - L1/L2/R1/R2 无功能
 #define SERVO_GRIP_MODE_JOG        0
 #define SERVO_GRIP_MODE_ONESHOT    1
 #ifndef SERVO_GRIP_MODE_DEFAULT
@@ -215,10 +300,12 @@
 // 当前机械爪控制模式（SELECT 切换；调试器里可直接 Watch 这个变量）
 extern volatile uint8_t g_servo_grip_mode;
 
-// 一键放下序列状态：0=空闲；1..5=正在跑（1=MG995 2=SG90下 3=SG90上 4=延时 5=机械爪）
-// ⚠️ 调试器里 Watch 它：如果一直不是 0，说明序列卡住了 —— 此时**所有手动控制都被跳过**
-//    （表现就是"舵机都不听话"）。正常情况下按完 L1 几秒内应回到 0。
-extern volatile uint8_t g_servo_drop_step;
+// 一键序列状态（调试器 Watch）：
+//   g_servo_seq_id  : 0=空闲 / 1=一键放下(L1) / 2=一键摆臂(R1) / 3=自定义1(R2) / 4=自定义2(L2)
+//   g_servo_seq_step: 0=空闲；1..5=当前步骤（1=MG995 2=SG90下 3=SG90上 4=延时 5=机械爪）
+// ⚠️ step 一直非 0 说明序列卡住 —— 此时**所有手动控制都被跳过**（舵机都不听话）。
+extern volatile uint8_t g_servo_seq_id;
+extern volatile uint8_t g_servo_seq_step;
 
 // ===== 机械爪堵转保护 =====
 // 机械爪到位后若还一直按住按键，超过这个时间就断开该通道 PWM（舵机失力、不再发热）。

@@ -183,27 +183,68 @@ void Mecanum_Move(int16_t vx, int16_t vy, int16_t vw)
     mecanum_apply(vx, vy, vw, 1000);
 }
 
-/* ===== 软启动：限制每个轮子每 10ms 的占空比变化量 =====
+/* ===== 软启动 + 加减速曲线 =====
  * 目的：指令跳变（推杆 0 -> 60%）时不让四个电机同时瞬变，
  *       削掉启动浪涌电流和电机线上的 dV/dt（电磁干扰源）。
- * 主循环 10ms 调一次，"每 tick 60" = 满量程约 170ms 爬到位。 */
+ * 现在带曲线（和舵机那套同思路）：
+ *   起步：每 tick 的"增量"从 0 逐渐加到 MOTOR_SLEW_STEP（约 8 tick = 40ms）；
+ *   收尾：离目标近时增量按剩余距离线性减小，但不低于 巡航增量/MOTOR_RAMP_TAIL_DIV；
+ *   中间：恒定 MOTOR_SLEW_STEP（= 1.3%/5ms，满量程约 385ms）。
+ * 主循环每 tick（5ms）调一次，无阻塞。 */
 #if MOTOR_SLEW_ENABLE
-static int16_t s_slew_state[4] = {0, 0, 0, 0};
+static int16_t s_slew_state[4] = {0, 0, 0, 0};   /* 每轮当前输出 */
+static int16_t s_slew_rate[4]  = {0, 0, 0, 0};   /* 每轮当前"每 tick 增量"（加减速用） */
 
-static int16_t slew_step(int16_t cur, int16_t tgt)
+static int16_t slew_step(int16_t cur, int16_t tgt, uint8_t idx)
 {
-    if (tgt > (int16_t)(cur + MOTOR_SLEW_STEP)) return (int16_t)(cur + MOTOR_SLEW_STEP);
-    if (tgt < (int16_t)(cur - MOTOR_SLEW_STEP)) return (int16_t)(cur - MOTOR_SLEW_STEP);
-    return tgt;
+    const int16_t diff = (int16_t)(tgt - cur);
+    int16_t dir = 1;
+    int16_t remain;
+    int16_t v;
+    int16_t vmin;
+    int16_t accel;
+
+    if (diff == 0)
+    {
+        s_slew_rate[idx] = 0;                    /* 到位：下次重新加速 */
+        return cur;
+    }
+
+    dir    = (diff > 0) ? 1 : -1;
+    remain = (int16_t)((diff > 0) ? diff : -diff);
+
+    /* 收尾减速：剩余距离 / RAMP_TICKS */
+    v = (int16_t)(remain / MOTOR_RAMP_TICKS);
+    if (v > (int16_t)MOTOR_SLEW_STEP) v = (int16_t)MOTOR_SLEW_STEP;
+
+    /* 末端最低速，避免最后几格爬太久 */
+    vmin = (int16_t)(MOTOR_SLEW_STEP / MOTOR_RAMP_TAIL_DIV);
+    if (vmin < 1) vmin = 1;
+    if (v < vmin) v = vmin;
+
+    /* 起步加速：每 tick 增量最多增加 巡航/MOTOR_RAMP_ACCEL_DIV */
+    accel = (int16_t)(MOTOR_SLEW_STEP / MOTOR_RAMP_ACCEL_DIV);
+    if (accel < 1) accel = 1;
+    if (v > (int16_t)(s_slew_rate[idx] + accel)) v = (int16_t)(s_slew_rate[idx] + accel);
+    if (v < 1) v = 1;
+
+    s_slew_rate[idx] = v;
+
+    if (v > remain) v = remain;
+    return (int16_t)(cur + dir * v);
 }
 
 /* 清零软启动状态：停车/刹车后调用，保证下次起步从 0 开始爬 */
 void Motor_SlewReset(void)
 {
-    for (uint8_t i = 0; i < 4; i++) s_slew_state[i] = 0;
+    for (uint8_t i = 0; i < 4; i++)
+    {
+        s_slew_state[i] = 0;
+        s_slew_rate[i]  = 0;
+    }
 }
 
-// 带软启动的版本（主循环用这个）
+// 带软启动 + 加减速曲线的版本（主循环用这个）
 void Mecanum_MoveLimitSlew(int16_t vx, int16_t vy, int16_t vw, int16_t limit)
 {
     int16_t vals[4];
@@ -212,7 +253,7 @@ void Mecanum_MoveLimitSlew(int16_t vx, int16_t vy, int16_t vw, int16_t limit)
 
     for (uint8_t i = 0; i < 4; i++)
     {
-        s_slew_state[i] = slew_step(s_slew_state[i], vals[i]);
+        s_slew_state[i] = slew_step(s_slew_state[i], vals[i], i);
         vals[i] = s_slew_state[i];
     }
 

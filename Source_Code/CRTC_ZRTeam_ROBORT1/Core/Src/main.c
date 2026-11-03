@@ -55,6 +55,15 @@
 #define BOOT_RESET_CAUSE_BLINK_ROUNDS  3
 /* 每轮之间的间隔（ms）：1.5 秒，足够分清"一组闪完"和"下一组开始" */
 #define BOOT_RESET_CAUSE_BLINK_GAP_MS  1500
+
+/* ===== 主循环节拍（ms）=====
+ * 每隔这么久读一次 PS2，并用同一个节拍驱动：底盘控制、舵机插值 (Servo_Task)、软启动斜坡。
+ * ⚠️ 现场问题：5ms（200Hz）轮询时手柄**总是掉模式**（红灯->绿灯）。
+ *    廉价 2.4G 接收器/手柄跟不上 200Hz 的包流，会自己退回数字模式。
+ *    因此改回 **10ms（100Hz）**——这也是手柄原生的帧周期，最稳；代价是输入延迟多约 5ms。
+ * ⚠️ 改这里必须同步改 USER/servo.h 的 SERVO_TICK_MS（舵机速度按它换算）
+ *    和 USER/motor.h 的 MOTOR_SLEW_STEP（软启动斜坡时间按它换算）。 */
+#define PS2_READ_PERIOD_MS  10
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -166,10 +175,10 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  { // 每10ms读取一次手柄
+  { // 每 PS2_READ_PERIOD_MS 毫秒读一次手柄（同时作为控制/舵机/软启动的 tick）
     Watchdog_Feed();     // 喂狗：本循环远快于 1s，不会误复位
 
-    if (HAL_GetTick() - last_read >= 10)
+    if (HAL_GetTick() - last_read >= PS2_READ_PERIOD_MS)
     {
       last_read = HAL_GetTick();
 

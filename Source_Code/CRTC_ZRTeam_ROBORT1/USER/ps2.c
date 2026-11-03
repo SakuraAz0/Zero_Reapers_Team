@@ -8,10 +8,12 @@
 // ===== 调试可观测变量 =====
 volatile PS2_Debug_t g_ps2_dbg = {0};
 
-// 连续失败计数 / 重配置重入保护 / 上次重配置时刻
-static uint8_t  s_fail_streak = 0;
-static uint8_t  s_in_config   = 0;
-static uint32_t s_last_cfg_ms = 0;
+// 连续失败计数 / 重配置重入保护 / 上次重配置时刻 / 连续掉模拟模式计数 / 重新初始化防重入
+static uint8_t  s_fail_streak   = 0;
+static uint8_t  s_in_config     = 0;
+static uint8_t  s_drop_streak   = 0;
+static uint8_t  s_reinit_guard  = 0;
+static uint32_t s_last_cfg_ms   = 0;
 
 // 振动状态：必须在每次轮询包里持续发送，否则手柄会在一个周期内把它清掉
 static uint8_t s_rumble_small = 0;
@@ -128,11 +130,18 @@ static void ps2_restore_analog(void)
     uint32_t now = HAL_GetTick();
 
     if ((uint32_t)(now - s_last_cfg_ms) < PS2_RECONFIG_INTERVAL_MS)
-        return;                                  // 限速，避免每 10ms 都发配置包
+        return;                                  // 限速，避免每 tick 都发配置包
 
     s_last_cfg_ms = now;
     g_ps2_dbg.mode_recover_count++;
     PS2_EnterAnalogMode();
+}
+
+// 无视限速，立刻拉回一次（掉模式的第一帧就用它，尽量缩短"失控"时间）
+static void ps2_restore_analog_now(void)
+{
+    s_last_cfg_ms = HAL_GetTick() - (uint32_t)PS2_RECONFIG_INTERVAL_MS;   /* 让限速立即放行 */
+    ps2_restore_analog();
 }
 
 // ===== 初始化：进入并确认模拟（红灯）模式 =====
@@ -237,9 +246,31 @@ uint8_t PS2_ReadData(PS2_Data_t *data)
 
     if (!data->mode)
     {
-        // 掉出模拟模式（多键连按/接收器干扰时常见）：自动重发配置序列把它拉回红灯模式，
-        // 操作手不用去按手柄上的 ANALOG 键。限速在 ps2_restore_analog() 内部。
-        ps2_restore_analog();
+        // 掉出模拟模式（多键连按/接收器干扰/轮询太快时常见）：自动重发配置序列把它拉回红灯模式，
+        // 操作手不用去按手柄上的 ANALOG 键。
+        // 策略：① 掉模式的**第一帧**立刻拉回（无视限速，尽量缩短失控时间）；
+        //       ② 连续多次都拉不回来（>= PS2_MODE_ESCALATE_AFTER）-> 升级为整包 PS2_Init() 重初始化；
+        //       ③ 其它情况按 PS2_RECONFIG_INTERVAL_MS 限速慢慢试。
+        s_drop_streak++;
+        if (s_drop_streak == 1u)
+        {
+            ps2_restore_analog_now();
+        }
+        else if (s_drop_streak >= (uint8_t)PS2_MODE_ESCALATE_AFTER && !s_reinit_guard)
+        {
+            s_drop_streak  = 0u;
+            s_reinit_guard = 1u;                     /* 防重入：PS2_Init 内部还会读包 */
+            PS2_Init();                              /* 整包重新初始化（重新识别型号 + 配置） */
+            s_reinit_guard = 0u;
+        }
+        else
+        {
+            ps2_restore_analog();
+        }
+    }
+    else
+    {
+        s_drop_streak = 0u;                          /* 回到模拟模式：掉模式计数清零 */
     }
 
     if (data->mode)

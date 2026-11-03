@@ -29,13 +29,21 @@
 #define PS2_PKT_DELAY_US       1000
 // 连续读取失败多少次后自动重发配置序列（10ms 轮询下 50 次 ≈ 0.5s）
 #define PS2_RECONFIG_FAILS     50
-// 两次"自动拉回模拟模式"的最小间隔（掉出模拟模式/连续失败时用）
-#define PS2_RECONFIG_INTERVAL_MS  500U
+// 两次"自动拉回模拟模式"的最小间隔（连续失败/反复掉模式时用；掉模式第一次会无视这个间隔立刻拉回）
+#ifndef PS2_RECONFIG_INTERVAL_MS
+#define PS2_RECONFIG_INTERVAL_MS  200U
+#endif
+// 掉出模拟模式后连续几次都拉不回来 -> 升级为"整包重新初始化 PS2_Init()"（应对接收器/手柄卡死）
+#ifndef PS2_MODE_ESCALATE_AFTER
+#define PS2_MODE_ESCALATE_AFTER   3
+#endif
 // 上电后等待手柄/接收器稳定
 #define PS2_BOOT_DELAY_MS      50
 // 是否在配置序列里开启振动功能（用不到振动或无线接收器异常时改为 0；也可用 -D 覆盖）
+// ⚠️ 现场出现过"手柄总是掉模式"，已按稳定性优先关闭振动（与车1 一致）：
+//    不再发送振动配置/振动字节，减少对接收器的额外写操作。以后要用振动再改回 1。
 #ifndef PS2_ENABLE_RUMBLE
-#define PS2_ENABLE_RUMBLE      1
+#define PS2_ENABLE_RUMBLE      0
 #endif
 
 // ===== 手柄数据结构 =====

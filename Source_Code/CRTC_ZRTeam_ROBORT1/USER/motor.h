@@ -23,17 +23,25 @@
 #define MOTOR_BRAKE_BOTH_HIGH  1
 #endif
 
-// ===== 软启动（防启动浪涌 / 降低电机线 dV/dt 干扰）=====
-// 主循环 10ms 调一次 Mecanum_MoveLimitSlew()，每个轮子每次最多变化 MOTOR_SLEW_STEP。
-// 25 = 每 tick 2.5% -> 满量程(1000)约 400ms 爬到位
-//   （实测：快推摇杆到顶会复位、慢推不会 -> 把斜坡从 160ms 放慢到 ~370ms，直接对症）。
-// 想更柔和就调小（20 -> 500ms，15 -> 670ms）；觉得起步太肉可调大（40 -> 250ms，60 -> 170ms）。
-// 这是"输出斜坡"，不改变任何控制逻辑（档位/方向/合成关系都不变）。
+// ===== 软启动 + 加减速曲线（防启动浪涌 / 降低电机线 dV/dt 干扰）=====
+// 主循环每次 tick 调一次 Mecanum_MoveLimitSlew()，每轮"巡航增量" = MOTOR_SLEW_STEP。
+// 注意：节拍是 **10ms**（见 main.c 的 PS2_READ_PERIOD_MS），所以这里是"每 10ms 的步长"。
+// 26 = 每 tick 2.6% -> 满量程(1000)约 385ms 爬到位（与 5ms×13 相同）。
+// 曲线：起步/收尾阶段增量更小，中间才是 MOTOR_SLEW_STEP（见 motor.c 的 slew_step）。
 #ifndef MOTOR_SLEW_ENABLE
 #define MOTOR_SLEW_ENABLE 1
 #endif
 #ifndef MOTOR_SLEW_STEP
-#define MOTOR_SLEW_STEP   25
+#define MOTOR_SLEW_STEP   26
+#endif
+#ifndef MOTOR_RAMP_TICKS
+#define MOTOR_RAMP_TICKS      5    /* 收尾减速段（tick，10ms -> 50ms） */
+#endif
+#ifndef MOTOR_RAMP_ACCEL_DIV
+#define MOTOR_RAMP_ACCEL_DIV  8    /* 起步：约 8 tick(80ms) 加速到巡航增量 */
+#endif
+#ifndef MOTOR_RAMP_TAIL_DIV
+#define MOTOR_RAMP_TAIL_DIV   4    /* 末端最低速 = 巡航增量/本值（防最后几格爬太久） */
 #endif
 
 // ===== 函数声明 =====

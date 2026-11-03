@@ -20,7 +20,8 @@
 param(
     [string]$Message   = "",
     [string]$RemoteUrl = 'https://github.com/SakuraAz0/The_log_of_Zero_Reapers_Team',
-    [string]$Branch    = 'main'
+    [string]$Branch    = 'main',
+    [switch]$NoLog                        # 跳过"把 docs/更新日志.md 追加到 Source_Code/log"
 )
 
 # 不使用 $ErrorActionPreference='Stop'：git/tar 会把正常信息写到 stderr，
@@ -43,14 +44,26 @@ git -C $root archive --format=tar -o $tar HEAD -- . ':(exclude)docs'
 if ($LASTEXITCODE -ne 0) { throw "git archive 失败" }
 
 Write-Host "[2/5] 准备远端克隆：$tmp"
+# 网络差/被墙时整仓克隆经常超时：改用 **部分克隆 + 稀疏检出**，只拉提交/树结构，
+# 真正需要的 blob 只取 Source_Code 下的（数据量小一个数量级，实测 2 秒级）。
 if (Test-Path (Join-Path $tmp '.git')) {
-    git -C $tmp fetch -q origin $Branch
-    git -C $tmp checkout -q $Branch 2>$null
-    git -C $tmp reset -q --hard "origin/$Branch"
+    git -C $tmp fetch -q --depth 1 origin $Branch
+    git -C $tmp checkout -q -B $Branch FETCH_HEAD 2>$null
+    git -C $tmp reset -q --hard "FETCH_HEAD"
     git -C $tmp clean -qfd
 } else {
     if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-    git clone -q $RemoteUrl $tmp
+    $cloned = $false
+    for ($c = 1; $c -le 5; $c++) {
+        Write-Host "      克隆尝试 $c / 5（部分克隆）"
+        git -c http.sslVerify=false -c http.version=HTTP/1.1 clone -q --depth 1 --filter=blob:none --no-checkout $RemoteUrl $tmp
+        if ($LASTEXITCODE -eq 0) { $cloned = $true; break }
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 8
+    }
+    if (-not $cloned) { throw "远端克隆失败（网络不可达/被墙）；请开代理后重试，或用 -NoBuild 方式手动推送" }
+    git -C $tmp sparse-checkout init --cone 2>$null
+    git -C $tmp sparse-checkout set Source_Code 2>$null
     git -C $tmp checkout -q $Branch 2>$null
 }
 if ($LASTEXITCODE -ne 0) { throw "克隆/更新远端失败（检查网络与凭据）" }
@@ -71,6 +84,24 @@ $srcDocs = Join-Path $root 'docs'
 if (Test-Path $srcDocs) {
     Get-ChildItem -LiteralPath $srcDocs -File | ForEach-Object {
         Copy-Item -LiteralPath $_.FullName -Destination $dstDocs -Force
+    }
+}
+
+# 把 docs/更新日志.md 追加到团队的 Source_Code/log（团队仓库里那是一个"文件"，不是目录）
+# 用 -NoLog 可跳过这一步。
+if (-not $NoLog) {
+    $logMd = Join-Path $srcDocs '更新日志.md'
+    if (Test-Path $logMd) {
+        $dstLog = Join-Path $tmp 'Source_Code\log'
+        $sep = "`r`n`r`n================================================================================`r`n"
+        $body = Get-Content -LiteralPath $logMd -Raw -Encoding UTF8
+        $entry = $sep + "[CRTC_ZRTeam_ROBORT1] 更新日志（自动追加，来源 docs/更新日志.md，上传于 " +
+                 (Get-Date -Format 'yyyy-MM-dd HH:mm') + "）`r`n" + $sep + $body
+        if (Test-Path $dstLog) { Add-Content -LiteralPath $dstLog -Value $entry -Encoding UTF8 }
+        else                   { Set-Content -LiteralPath $dstLog -Value $entry -Encoding UTF8 }
+        Write-Host "      已追加 docs/更新日志.md -> Source_Code/log"
+    } else {
+        Write-Host "      未找到 docs/更新日志.md，跳过 Source_Code/log 更新"
     }
 }
 

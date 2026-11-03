@@ -38,9 +38,9 @@
 #define CTRL_GEAR0_LO          100      // 慢速档下限 10%
 #define CTRL_GEAR0_HI          300      // 慢速档上限 30%
 #define CTRL_GEAR1_LO          300      // 中速档下限 30%
-#define CTRL_GEAR1_HI          600      // 中速档上限 60%
-#define CTRL_GEAR2_LO          600      // 快速档下限 60%
-#define CTRL_GEAR2_HI          CTRL_DUTY_CAP   // 快速档上限 92%（不是 100%）
+#define CTRL_GEAR1_HI          600      // 中速档上限 60%（与车1 同步）
+#define CTRL_GEAR2_LO          600      // 快速档下限 60%（与中速档首尾相接，无重叠）
+#define CTRL_GEAR2_HI          850      // 快速档上限 85%（与车1 同步；全局 92% 上限仍保留）
 // 换档去抖：两次换档至少间隔这么久（按住不会连续跳档）
 #define CTRL_GEAR_LOCKOUT_MS   250U
 
