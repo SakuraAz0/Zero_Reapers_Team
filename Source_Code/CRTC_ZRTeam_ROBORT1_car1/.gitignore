@@ -1,0 +1,41 @@
+# ===== 构建产物 / Build output =====
+cmake-build-*/
+build/
+Debug/
+Release/
+*.o
+*.obj
+*.d
+*.elf
+*.hex
+*.bin
+*.map
+*.su
+*.lst
+*.i
+*.exe
+
+# ===== IDE / 编辑器 / IDE & editor =====
+.idea/
+.vscode/
+*.launch
+*.ioc.bak
+*.bak
+
+# ===== 操作系统 / OS =====
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ===== 上传到 GitHub 用的临时文件（tools/upload_to_github.ps1）=====
+_gh_upload/
+_gh_src.tar
+
+# ===== 手动 ARM 构建校验用的临时目录 =====
+_armbuild/
+# ===== 一键烧录脚本用的临时构建目录（tools/flash.ps1） =====
+_build_flash/
+
+# ===== 第一辆车完工时的源码副本（不参与版本管理） =====
+* - 副本/
+*副本*/
